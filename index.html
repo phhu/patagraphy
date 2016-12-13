@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>Patagraphy</title>
+
+		<link rel="stylesheet" type="text/css" href="patagraphy.css">		
+		<script type="text/javascript" src="js/d3.v3.min.js"></script>
+		<script type="text/javascript" src="js/d3plus.min.js"></script>
+		<script type="text/javascript" src="js/uri.min.js"></script>
+		<script type="text/javascript" src="js/queue.v1.min.js"></script>
+		<script type="text/javascript" src="http://www.youtube.com/player_api"></script>
+		<script type="text/javascript" src="pataSupportFuncs.js"></script>
+		<script type="text/javascript" src="patadata.js"></script>
+		<script>
+			
+
+		</script>
+	</head>
+	<body onload="toggle( getInputDefault('show',divs ));populateForm();loadData();"> 
+	
+		<script type="text/javascript">
+
+			//video player setup   setupPlayer();
+			var players=[], player, videos = [], xScale, svg, dancedata = [];
+			var divs = ['project','context','thanks','method'];
+			var setupPlayer=function() {
+				var tag = document.createElement('script');
+				tag.src = "//www.youtube.com/player_api";
+				var firstScriptTag = document.getElementsByTagName('script')[0];
+				firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+			};
+
+			var anglefunctions = ['offsetHeading','MagneticHeading','deltaHeading'];	
+			//get query data
+			var URLquery = URI.parseQuery(window.location.search);
+			function getInputDefault(inputName, arrayToSearch){
+				return arrayToSearch.indexOf(URLquery[inputName]) > -1 ? URLquery[inputName] : arrayToSearch[0];
+			}
+			
+			
+			var sequence = getInputDefault('sequence',Object.keys(sequences));
+			var anglefunction =  getInputDefault('anglefunction',anglefunctions);
+			var filesToLoad = sourcesCSV.filter(function(s){return s.session==sequences[sequence].session;});
+			
+			//Width and height of SVG
+			var margin = {top: 20, right: 500, bottom: 50, left: 80},
+				svgWidth = (sequences[sequence].width == undefined) ? 6000 : parseFloat(sequences[sequence].width) , svgHeight = 550,
+				width = svgWidth - margin.left - margin.right,
+				height = svgHeight - margin.top - margin.bottom;
+			var yHeightOffset = 120 + margin.bottom;			
+			var clockHeight = 195;
+			var seqHeight = 230,eventTextHeight=440;
+			function loadData(){
+				if (filesToLoad.length ==0){
+					console.log("No files to load. Please specify a session.");
+				} else {
+					console.log("loading data");
+					loadDataCSV();
+				}
+			}
+			function loadDataCSV(){
+				var loadCount = 0;
+				filesToLoad.forEach(function(s){
+					d3.csv(s.file, function(error, json) {
+						if (error) return console.warn(error);
+						//console.log("Loading file " + s.file);
+						json.forEach(function(d,i){
+							
+							
+							d.dancer=s.dancer;d.role=s.role; d.location=s.location;
+							d.offsetRecordTime = parseFloat(parseTimestamp(d.time)) + s.offset;
+							d.offsetHeading = 0+ parseFloat(d.MagneticHeading) + partSettings[s.role][s.location].headingOffset; // heading offset because phones in different positions
+							//deltaHeading should show changes in orientation
+							d.deltaHeading = (i<1 ? 0 : d.MagneticHeading - json[i-1].MagneticHeading );
+							//	console.log(json[i-1]['MagneticHeading']);
+							if (d.deltaHeading > 180){ d.deltaHeading -= 360;}
+							if (d.deltaHeading < -180){ d.deltaHeading += 360;}
+							//console.log(d.deltaHeading);
+						});
+						dancedata = dancedata.concat(json); //all data in one array
+						loadCount++;
+						if (loadCount == filesToLoad.length){doChart();}   //do chart once all sources loaded
+						
+					});
+				});
+			}
+			
+			function populateForm(){
+				//document.getElementById('videotoggle').style.display = 'none';
+				var sequenceSelect = document.getElementById('sequence');
+				for (var s in sequences) {
+					var opt = document.createElement("option");
+					opt.value = sequences[s].name;
+					opt.innerHTML = sequences[s].name;
+					if (sequence == sequences[s].name){opt.setAttribute("selected", "selected");}
+					sequenceSelect.appendChild(opt);
+				}
+				/*var angleFunctionSelect = document.getElementById('anglefunction');
+				for (var s in anglefunctions) {
+					var opt = document.createElement("option");
+					opt.value = anglefunctions[s];
+					opt.innerHTML = anglefunctions[s];
+					if (anglefunction == anglefunctions[s]){opt.setAttribute("selected", "selected");}
+					angleFunctionSelect.appendChild(opt);
+				}*/
+			}
+			
+			function loadVideos(){
+				if (sequences[sequence].videos == undefined){ 
+					document.getElementById('videotoggle').style.display = 'none';
+					return false;
+				}
+				document.getElementById('videotoggle').style.display = 'inline-block';
+				var videoColours =['blue','green','red'];
+				d3.select('#videos')
+					.selectAll('iframe')
+					.data(sequences[sequence].videos)
+					.enter()
+					.append('iframe')
+					.attr('src', function(d,i){return d.src;})  //frameborder="0" allowfullscreen id="video"  console.log("loading video");console.log(d);
+					//.style('border-bottom',function(d,i){return videoColours[i] + ' 3px solid';})
+					.style('border-left',function(d,i){return videoColours[i] + ' 3px solid';})
+					.attr('allowfullscreen','')
+					.attr('width','400px')
+					.attr('height',((svgHeight -50)/2) + 'px')
+					.attr('id',function(d,i){return d.id;})
+					.attr('class',"video")
+					;
+				videos = sequences[sequence].videos;
+				videos.forEach(function(v,vIndex){
+					v.player = new YT.Player(v.id, {
+						events: {
+						  // call this function when player is ready to use
+						  'onReady': onPlayerReady,
+						   'onStateChange': onPlayerStateChange
+						}
+					});	
+					v.line = d3.select("#chart").append("line")
+								.attr({"id":"videoline",
+										"x1": -1, 
+										"x2": -1, 
+										"y1": 0,
+										"y2":400
+									})
+								.style({"stroke":videoColours[vIndex],
+										"stroke-width":"0.5px"
+								})
+								/*.append("text")
+								.text('test')
+								.attr("y", 5)
+								.attr("x", 5)
+								.attr("stroke", "black").attr("width",100).attr("height",50)
+								.attr("class","partLabel")
+								.attr("id","partLabel")*/
+								;
+					v.clockdiv = d3.select("#videotimes").append("div")
+								.text('')
+								.attr("stroke", "black")
+								.attr("class","videotime")
+								;
+					
+				});
+				
+			}
+			
+			//need to do make a line for each video, then move it, having selected it first
+			function updateVideoLines(){
+				var vtext="";
+				videos.forEach(function(v,vi){
+					var pos = margin.left + xScale(v.player.getCurrentTime() + parseFloat(v.starttime));
+					var d = new Date(1000*(v.player.getCurrentTime() + parseFloat(v.starttime)));
+					v.clockdiv.text(v.id + ': ' + d.getHours() + ':' + ('0'+d.getMinutes()).slice(-2) + ':' + ('0'+d.getSeconds()).slice(-2) + ':' + ('00'+d.getMilliseconds()).slice(-3));   //+ 
+					vtext=('			\'' + (vi>0? 'starttime':'endtime') + '\':parseTimestamp("2014-12-21 ' + d.getHours() + ':' + ('0'+d.getMinutes()).slice(-2) + ':' + ('0'+d.getSeconds()).slice(-2) + ':' + ('00'+d.getMilliseconds()).slice(-3) + '"),\n')+vtext;   //+ 
+					v.line.attr("x1",pos).attr("x2",pos);
+					//console.log(v.line.attr("x1"));
+				})
+				d3.select('#videotext').text(vtext);
+
+			}
+
+			function doChart(){
+				console.log("starting doChart");
+				//console.log(dancedata);		
+				//var getTimeScale = function(timeString){return Math.floor(timeScale(timeFormatSeconds.parse(timeString)));};
+				
+				////d3.select('#video').attr("src",getYouTubeURL("hc8DcM0KIxY"));   //Lg9NUmrR6pc
+				//d3.select('#video').attr("src",getYouTubeURL("hc8DcM0KIxY"));
+				loadVideos();
+				var plotdata = dancedata.filter(function(d){
+						return (d.offsetRecordTime >= sequences[sequence].starttime && d.offsetRecordTime <= sequences[sequence].endtime);
+				})
+				var chartWidth =  width ;
+				//var chartWidth = (sequences[sequence].width == undefined )? width : sequences[sequence].width;
+				svg = d3.select("#chart")
+					.attr("width", chartWidth + margin.left + margin.right)
+					.attr("height", svgHeight)
+					
+				/*xScale = d3.scale.linear()
+					.domain([
+						d3.min(dancedata,function(d){return d.offsetRecordTime;}),
+						d3.max(dancedata,function(d){return d.offsetRecordTime;})
+					])
+					.range([0, width])
+					;
+				*/
+				xScale = function(d){return xScaleMS(d*1000);};
+					
+				var xScaleMS = d3.time.scale()
+					.domain([
+						d3.min(plotdata,function(d){return d.offsetRecordTime;}) *1000,
+						d3.max(plotdata,function(d){return d.offsetRecordTime;}) *1000
+					])
+					.range([0, chartWidth])
+					;
+
+				var xScaleMS_diff = d3.time.scale()
+					.domain([
+						(d3.min(plotdata,function(d){return d.offsetRecordTime;}) - d3.min(dancedata,function(d){return d.offsetRecordTime;})) *1000
+						,(d3.max(plotdata,function(d){return d.offsetRecordTime;}) - d3.min(dancedata,function(d){return d.offsetRecordTime;})) *1000,
+					])
+					.range([0, chartWidth])
+					;	
+
+				var xScaleMS_plot = d3.time.scale()
+					.domain([
+						0
+						,(d3.max(plotdata,function(d){return d.offsetRecordTime;}) - d3.min(plotdata,function(d){return d.offsetRecordTime;})) *1000,
+					])
+					.range([0, chartWidth])
+					;	
+					
+				var xAxis = d3.svg.axis()
+					  .scale(xScaleMS)
+					  //.tickFormat(timeFormat)
+					  .orient("bottom")
+					  .ticks(d3.time.second, 5)
+					  .tickFormat(d3.time.format.utc('%Hh %Mm %Ss'))
+					;
+				var xAxisDiff = d3.svg.axis()
+					  .scale(xScaleMS_diff)
+					  //.tickFormat(timeFormat)
+					  .orient("bottom")
+					  .ticks(d3.time.second, 5)
+					  .tickFormat(d3.time.format.utc('%Hh %Mm %Ss'))
+					;		
+				var xAxisPlot = d3.svg.axis()
+					  .scale(xScaleMS_plot)
+					  //.tickFormat(timeFormat)
+					  .orient("bottom")
+					  .ticks(d3.time.second, 5)
+					  .tickFormat(d3.time.format.utc('%Hh %Mm %Ss'))
+					;		
+
+					//draw the x axis
+				svg.append("g")
+				  .attr("class", "x axis")
+				  .attr("transform", "translate(" + margin.left +"," + (yHeightOffset + clockHeight) + ")")
+				  .call(xAxis);
+				/*svg.append("g")
+				  .attr("class", "x axis")
+				  .attr("transform", "translate(" + margin.left +"," + (height + 20) + ")")
+				  .call(xAxisDiff);*/
+				svg.append("g")
+				  .attr("class", "x axis")
+				  .attr("transform", "translate(" + margin.left +"," + (yHeightOffset + seqHeight) + ")")
+				  .call(xAxisPlot);				  
+				
+				//label parts
+				d3.select('svg#labels').selectAll("text#partLabel")
+					.data([	partSettings.leader.left,
+							partSettings.leader.right,
+							partSettings.leader.chest,
+							partSettings.follower.left,
+							partSettings.follower.right,
+							partSettings.follower.chest,
+							{label: 'Clock', height:clockHeight},
+							{label: 'Seq. time', height:seqHeight},
+							{label: 'Desc.', height:(eventTextHeight - yHeightOffset+4)},
+							{label: 'Score', height:-100},
+							//{label: 'Seq.', height:-155},
+						])
+					.enter()
+					.append("text")
+					.text(function(d){return d.label;})
+					.attr("y", function(d){return d.height + yHeightOffset-15;})
+					.attr("x", 5)
+					.attr("width",100)
+					.attr("height",50)
+					//.attr("stroke", "black")
+					.attr("class","partLabel")
+					.attr("id","partLabel")
+					;	  
+
+				//plot the score images
+				sequences[sequence].scores.forEach(function(s){
+					var score = scores[s.id];
+					
+					//console.log("Plotting score: " + s.id);
+					
+					score.width = xScale(score.endtime) - xScale(score.starttime);
+					score.barcount = score.lastbar - score.firstbar + 1;
+					score.barwidth = score.width / score.barcount;
+					score.startxScale = xScale(s.starttime);
+					score.endxScale = xScale(parseFloat(s.starttime) + parseFloat(score.length));
+
+					svg.select("g#score").selectAll("image#" + score.id)
+					   .data(d3.range(score.firstbar,score.lastbar + 1))
+					   .enter()
+					   .append("image")
+					   .attr({
+								'class': score.id,
+								//'x':function(d){return ((d - score.firstbar) * score.barwidth) + score.startxScale + margin.left;},
+								'x':function(d){
+									return (margin.left + parseFloat(xScale(parseFloat(s.starttime) + parseFloat(parseTime(score.bartimings[score.scoreprefix + d])))));
+								},
+								'y':20,
+								'z-index':-1,
+								//'width':score.barwidth,
+								'width':function(d){
+									var timediff = xScale(parseTime(score.bartimings[score.scoreprefix + parseInt(d+1)])) -  xScale(parseTime(score.bartimings[score.scoreprefix + parseInt(d)]));
+									//console.log(timediff);
+									return timediff;
+								},
+								'height':'100',
+								'transform':'scale(1,1)',
+								'preserveAspectRatio':'none',
+								//'xlink:href':function(d){return "score/poema_slices2/p" + d + ".png";}
+								'xlink:href':function(d){return "score/" + score.id + "_slices/" + score.scoreprefix + d + ".png";}
+							})
+						;
+				});
+				
+				//boxes around scores
+				svg.select('g#scorebox').selectAll("rect#score")
+				   .data(sequences[sequence].scores)
+				   .enter()
+				   .append("rect")
+				   .attr("id","score")
+				   .attr("class","score")
+				   .attr("x", function(d, i) {
+						return  xScale(d.starttime) + margin.left;
+				   })
+				   .attr("y", 0)
+				   .attr("height", (clockHeight +yHeightOffset))
+				   .attr("width", function(d, i) {
+						return (xScale(scores[d.id].endtime) - xScale(scores[d.id].starttime));
+				   })
+				;
+				
+				//do events
+				var svgEvents = svg.select('g#events');
+				if (sequences[sequence].events == undefined){sequences[sequence].events=[];} //check we have events
+				svgEvents.selectAll("rect#event")
+				   .data(sequences[sequence].events)
+				   .enter()
+				   .append("rect")
+				   .attr("id","event")
+				   .attr("class","event")
+				   .attr("x", function(d, i) {
+						return  xScale(d.starttime) + margin.left;
+				   })
+				   .attr("y", 0)
+				   .attr("height", svgHeight)
+				   .attr("width", function(d, i) {
+						return  xScale(d.endtime) - xScale(d.starttime);
+				   })
+				   .style("fill",function(d,i){return d.fill;})
+				   ;
+				
+				//event text				
+				svgEvents.selectAll("text.event")
+				   .data(sequences[sequence].events)
+				   .enter()
+				   .append("text")
+				   .text(function(d){return d.notes;})
+				   .attr("id",function(d,i){return "eventtext_" + i;})
+				   .attr("class","eventtext")
+					.attr("stroke","black")
+				   .attr("x", function(d, i) {
+						return  xScale(d.starttime) + margin.left + 2;
+				   })
+				   .attr("y",function(d){return eventTextHeight + (d.heightOffset == undefined? 0:d.heightOffset);})
+				   .attr("height", svgHeight)
+				   .attr("width", function(d, i) {
+						return  xScale(d.endtime) - xScale(d.starttime);
+				   })				   
+				;					
+
+				//wrapping of event text - using d3plus
+				svg.selectAll("text.eventtext").each(function(d,i){
+					var w = d3.max([80,parseFloat(d3.select(this).attr("width"))]);
+					//console.log("W: " + w);
+					d3plus.textwrap()
+						.container('#eventtext_' + i)
+						.width(w)
+						//.resize(true)
+						.draw();				
+				});
+				
+				//do radial plots
+				var rline = d3.svg.line.radial()
+					.angle(function(d){
+						return d.MagneticHeading*Math.PI/180
+						//return d.accelerationX    ; 
+					})   //
+					.radius(function(d) { 
+						//return d.motionYaw * 10;
+						//return d.MagneticHeading /5; 
+						return getAcc2(d)*25;
+						//return getAcc(d)*15;
+					});				
+				rPlots.forEach(function(p){
+					//return 0;   //don't bother
+					d3.select('svg#radialplots').append("path")
+						.datum(plotdata.filter(function(d){return d.role==p.role & d.location==p.location;}))
+						.attr("class", "line")
+						.attr("stroke", partSettings[p.role][p.location].colour)
+						.attr("d", rline)
+						.attr("transform", "translate(" + (75 + p.tx) + "," + p.ty + ")")
+						/*.on("click", function(d){
+							//player.seekTo(d.offsetRecordTime, true);
+							console.log("clicked: " + d.offsetRecordTime);
+							console.log(d);
+						})*/
+						;				
+				});
+				
+				//draw lines shapes for each dance part				
+				var headingSettingToUse = getAngleFunction();
+				svg.select('g#dlines').selectAll("#dline")
+				   //.data([])    //knock out the lines
+				   .data(plotdata)
+				   .enter()
+				   .append("line")
+				   .attr("id","dline")
+				    .attr("class","dline")
+				   .attr("x1", function(d, i) {
+						return xScale(d.offsetRecordTime) + margin.left;
+				   })
+				   .attr("x2", function(d, i) {
+						return xScale(d.offsetRecordTime) + margin.left;
+				   })
+				   .attr("y1", function(d) {
+						return partSettings[d.role][d.location].height + yHeightOffset; // + getAcc(d) * 5;
+				   })
+				   .attr("y2", function(d) {
+						var a =getAcc(d) * 40;
+						//var a = getRot(d) * 20;
+						//var a = d.HeadingX;
+						//var a = Math.sqrt(d.motionUserAccelerationX^2 + d.motionUserAccelerationY^2) * 10;
+						a = isNumber(a) ? a * 1 : 0; 
+						//var a = 10 ;
+						return (partSettings[d.role][d.location].height + yHeightOffset + a) ;    //need to sort this so it doesn't return NaN
+				   })
+				   .attr("stroke",function(d) {
+						return partSettings[d.role][d.location].colour;
+					})
+					.attr("transform", function(d){
+						return "rotate(" + 
+							(parseFloat(d[headingSettingToUse])*1 +180) + "," + 
+							parseFloat(parseFloat(xScale(d.offsetRecordTime)) + margin.left) + "," +    //margin.left
+							(1 * partSettings[d.role][d.location].height + yHeightOffset) +
+							")";
+					})
+				   ;	
+				  
+				  
+				var updateVideoPosition = function(d,v){
+					var videoOffset = d.offsetRecordTime - v.starttime;
+					if (videoOffset < 0){videoOffset =0;}
+					v.player.seekTo(videoOffset,true);				
+				}
+				//draw lines for clicks
+				svg.select('g#clines').selectAll("line#cline")
+				   //.data([])    //knock out the lines
+				   //.data(d3.range(0,chartWidth))
+				   .data(plotdata)
+				   .enter()
+				   .append("line")
+				   .attr("id","Cline")
+				   .attr("x1", function(d, i) {
+						return xScale(d.offsetRecordTime) + margin.left;
+				   })
+				   .attr("x2", function(d, i) {
+						return xScale(d.offsetRecordTime) + margin.left + 3;
+				   })
+				   .attr("y1", function(d) {
+						return 0;
+				   })
+				   .attr("y2", function(d) {
+						return seqHeight + yHeightOffset;
+				   })
+				   .attr("class","cline")
+					.on("click", function(d){
+						//console.log("XXclicked: " + d.offsetRecordTime + " starttime " + sequences[sequence].videos[0].starttime);
+						videos.forEach(function(v){
+							if (v.player.getPlayerState() == YT.PlayerState.PLAYING){
+								updateVideoPosition(d,v);
+							}
+						});
+					})
+					.on("dblclick", function(d){
+						//console.log("XXclicked: " + d.offsetRecordTime + " starttime " + sequences[sequence].videos[0].starttime);
+						videos.forEach(function(v){
+							updateVideoPosition(d,v);
+						});
+					})
+				   ;
+				
+				console.log('finishing doChart');
+			}  //end doChart
+
+			//VIDEO FUNCTIONS
+			function onYouTubePlayerAPIReady() {
+				//console.log("YT ready");
+			  // create the global player from the specific iframe (#video)
+				//sequences[sequence].videos.forEach(function(v){
+					/*var v = sequences[sequence].videos[0];
+					console.log("video " + v.id);
+					player = new YT.Player(v.id, {
+						events: {
+						  // call this function when player is ready to use
+						  'onReady': onPlayerReady,
+						   'onStateChange': onPlayerStateChange
+						}
+					});*/
+					
+				//});
+			}	
+			var playerReadyCount = 0;
+			function onPlayerReady(event) {
+				console.log("player ready");
+				//console.log(event.target);
+				//var p = event.target;
+				//p.seekTo(10);
+				playerReadyCount++;
+				if (playerReadyCount == videos.length){
+					setInterval(function(){ 
+						updateVideoLines()    
+					}, 100);
+				}
+			}
+			
+			var playerDone = false;
+			function onPlayerStateChange(event) {
+				/*console.log (event.data);
+				if (event.data == YT.PlayerState.PLAYING && !playerDone) {
+					console.log("Video is playing so I will stop it in 2 secs");
+					setTimeout(stopVideo, 2000);
+					//playerDone = true;
+				}*/
+			}
+			function stopVideo() {
+				/*console.log("I am now stopping the video");
+				player.pauseVideo();
+				playerDone = false;*/
+			}		
+
+			function getAngleFunction(){
+				var s = document.getElementById('anglefunction');
+				try{return s.options[s.selectedIndex].value;}
+				catch(e){return 'offsetHeading';}
+			}
+			function executeFunctionByName(functionName, context /*, args */) {
+			  var args = [].slice.call(arguments).splice(2);
+			  var namespaces = functionName.split(".");
+			  var func = namespaces.pop();
+			  for(var i = 0; i < namespaces.length; i++) {
+				context = context[namespaces[i]];
+			  }
+			  return context[func].apply(this, args);
+			}
+
+		</script>
+		<div id="project">
+			<div id="form">
+				<form id="f">
+					<span class="formtext">Sequence: </span>
+					<select name="sequence" id="sequence" style="min-width:130px;" onchange="document.getElementById('f').submit();">
+					</select>
+					
+					<button onclick="toggle_visibility('help');return false;" >Help</button>
+					<button onclick="toggle_visibility('radialplots');return false;" >Radial plots</button>
+					<button id="videotoggle" onclick="toggle_visibility('videos');toggle_visibility('videotimes');return false;" >Toggle videos</button>
+										
+					<!--				<select style="visibility:hidden" name="anglefunction" id="anglefunction" >
+					</select>
+									<input type="hidden" name="anglefunction" value="MagneticHeading"></input>
+					<textarea style="visibility:hidden"cols="100" rows="1" id="videotext"></textarea>
+					;
+					<button onclick="doChart();" value="draw" >Draw</button>
+					<button type="submit" value="draw2" >Draw2</button>-->
+				</form>
+				<!--<a href="about.html" target="_blank">About</a>-->
+			</div>		
+			<div id="videotimes"></div>
+			<div id="videos" ></div>
+			<svg id="labels" style="position:fixed; z-index: -1;left:0px; top:10px;" height="550" width="100"></svg>
+
+			<svg id="chart">
+				<g id="score"></g>
+				<g id="scorebox"></g>
+				<g id="events"></g>
+				
+				<g id="dlines"></g>
+				<g id="rplots"></g>
+				<g id="clines"></g>
+			</svg>
+			<svg id="radialplots" height="375" width="575" >
+				<rect x="0" y="0" fill="white" width="100%" height="100%" onclick="toggle_visibility('radialplots');return false;"/>
+				<text x="15" y="125">Leader</text>
+				<text x="15" y="250">Follower</text>
+				<text x="150" y="30">Left</text>
+				<text x="275" y="30">Chest</text>
+				<text x="400" y="30">Right</text>
+			</svg>
+			<div id="help" onclick="toggle_visibility('help');return false;">
+				<p>The visualisations here represent a tango dance, or a sequence of steps. You can change sequence by using the drop down menu in the top right hand corner. Sequences are named after the couple dancing (e.g. "PS" or "PVb") and the song or focus of the sequence (e.g. Songs "Poema" and "La Yumba", or "Movements" and "Timing").</p>
+				<p>The coloured lines represent the movements recorded by each iPhone. The angle of the line represents the magnetic heading, and the length represents the total scalar acceleration at the moment in time.</p>
+				<p>There is one series of coloured line per body location. These are labelled for example "Fl L" for "Follower's left leg", and "Ld Ch" for "Leader's chest", where the follower is (typically) the female of the couple.</p> 
+				<p>The x axis represents time. Two scales are given, one showing "Clock" time, or the time of day. This is useful for comparing with log files, as the logs are timestamped. The other shows "Sequence time", or the time since the start of the sequence shown.</p>
+				<p>The positions of the videos are represented by green and blue vertical lines, which move as the video plays. Press the "toggle videos" button if you can't see the videos. </p>
+				<p>If you click on the chart, you can move the video players to the point in time clicked. A single click moves only a player which is playing, whereas a double click moves them all.</p>
+				<p>Radial plots are also provided. Click the "Radial plots" button to show them. These create shapes based on an SVG path consisting of line segments whose length is the total scalar acceleration and whose angle is the offset magnetic heading. In other words, the data are the same except there is no temporal dimension. This gives an overview of the overall quality of movement for the whole sequence.</p>
+				<p>Where music is included, the score has been included to allow for comparison. Each bar of the score is synchronized (approximately) with the time scale.</p>
+				<p>On some sequences, the steps have been annotated with coloured blocks. These are used to identify particular sequences. Similar kinds of steps are in similar colours.</p>
+			</div>			
+		</div>	
+		<div id="menu">
+			<a onclick="toggle('project');" id="project_menu">Patagraphy</a>
+			| <a onclick="toggle('context');" id="context_menu">Context</a>
+			| <a onclick="toggle('method');" id="method_menu">Method</a>
+			| <a onclick="toggle('thanks');" id="thanks_menu">Thanks</a> 
+		</div>
+		<div id="text">	
+		
+			<div id="context">
+			
+				<p>Tango as a dance form developed in the early twentieth century in Argentina. It is danced in couples, with asymmetric roles for the partners, typically with a man leading and a woman following. It has basic principles of communication for movement, and a vocabulary of standard steps, but essentially the dance is improvised in response to music, partners and mood. This makes it similar to conversation or jazz, where standard formulae exist, but endless variations are possible, some more entertaining than others.</p>
+				
+				<div class="textvideo">
+					<iframe src="http://www.youtube.com/embed/j0Lywh_SgN8" frameborder="0" allowfullscreen class="textvideo" ></iframe>
+					<div class="videocaption"><A href="http://pabloveron.net/" target="_blank">Pablo Veron</a> interpreting Pugliese's "Pata Ancha" with Victoria Vieyra.</div>
+				</div>
+				
+				<p>Just as music and conversation can be recorded as audio, dance can be recorded as video, allowing the improvisation to be reviewed. However, while conversation and music have conventional forms for graphic representation (transcripts and musical score), often easier for analysis and learning, dance, and tango in particular, has no standard form of notation. Various systems have been developed, but none are standard:</p>
+				
+				<figure class="textimage">
+				  <img class="textimage" alt="Dance notion of Sleeping Beauty, using Valerie Sutton's "Dance writing" system." src="images/sleepingBeauty.jpg" style="border: solid 1px black"/>
+				  <figcaption>Dance notion of Sleeping Beauty, using <a href="www.valeriesutton.org/" target="_blank">Valerie Sutton</a>'s "<a href="www.dancewriting.org/" target="_blank">Dance writing</a>" system.</figcaption>
+				</figure>
+				<figure class="textimage">
+				  <img class="textimage" alt="An example of Rasche Notation system for tango" src="images/tangoNotation.jpg" style="border: solid 1px black"/>
+				  <figcaption>An example of "<a href="http://www.tangolincs.co.uk/TangoLincs-Notation.htm" target="_blank">Rasche Notation</a>" system for tango. Possibly didactically useful, but this does little to indicate the quality of the movement.</figcaption>
+				</figure>		
+				<figure class="textimage">
+				  <img class="textimage" alt="Painting of song 'Poema' by Murat Erdemsel" src="images/POEMAwebsite.jpg" style="width:750px;" />
+				  <figcaption><a href="http://muraterdemsel.com/MusicPaintingsPrints.html" target="_blank">Painting</a> of song 'Poema' by Murat Erdemsel. The x-axis shows time.</figcaption>
+				</figure>				
+				
+				<p>Given the ubiquity of motion sensors on mobile phones, <i>could we develop a system of visual representation useful in understanding improvised choreographic composition in tango?</i> "Patagraphy" is an initial attempt to address this question, using visualisations generated from recordings of motion sensor data from iPhones attached to dancers' lower legs and chests. These are most important body co-ordinates in the dance, as the chest communicates movement intent and the legs execute it, with the arms remaining relatively fixed. </p>
+
+				<p>Three initial questions can be asked. Firstly, do these visualisation help us to identify the steps and sequences performed in a tango? By looking at the plots of set movements (PS_movenents and PVb_movements), we can see that steps can easily be distinguished.</p>
+				
+				<figure class="textimage">
+				  <img class="textimage" src="images/PVb_movements_giros.jpg" style="width:560px; border: solid 1px black;"/>
+				  <figcaption>Visualisation of Giros (turns) from sequence PVb_movements. Note the timing of the "spikes" caused by the rotation.</figcaption>
+				</figure>		
+
+				<p>The rythmical quality of movements can be seen and related to the music, as in the "ochos" below. Also apparent are pauses (the musical use of pauses is a significant choreographic innovation in tango).</p>
+				
+				<figure class="textimage">
+				  <img class="textimage" src="images/PS_movements_ochos_pause.jpg" style="width:658px; border: solid 1px black;"/>
+				  <figcaption>Visualisation of back ochos and a pause from sequence PS_movements.</figcaption>
+				</figure>					
+					
+				<p>Secondly, can we use visualisations of movement data to understand the differences between different dancers? Here radial plots can make a comparison between two pairings, "PVb" and "PS", interpreting the same song. This gives an abstract representation of the whole dance, showing "PVb" to be a more controlled and precise couple:</p>
+
+				<figure class="textimage">
+				  <img class="textimage" src="images/PS_yumba_radial.jpg" style="width:546px; border: solid 1px black;"/>
+				  <figcaption>Radial plot of sequence PS_yumba.</figcaption>
+				</figure>				
+				<figure class="textimage"> 
+				  <img class="textimage" src="images/PVb_yumba_radial.jpg" style="width:566px; border: solid 1px black;"/>
+				  <figcaption>Radial plot of sequence PVb_yumba.</figcaption>
+				</figure>	
+				
+				<p>Finally, can we understand musical interpretation better through visualisation? Two contrasting songs were chosen for this study, the slow, lyrical and wistful "<a href="http://www.planet-tango.com/lyrics/Poema.htm" target="_blank">Poema</a>", Pugliese's intense, lustful and industrial "<a href="http://www.todotango.com/musica/tema/1517/La-yumba/" target="_blank">La Yumba</a>". The difference can be seen in radial plots from the same couple:</p> 
+				
+				<figure class="textimage">
+				  <img class="textimage" src="images/PVb_poema_radial.jpg" style="width:559px; border: solid 1px black;"/>
+				  <figcaption>Radial plot of sequence PVb_poema.</figcaption>
+				</figure>			
+				<figure class="textimage">
+				  <img class="textimage" src="images/PVb_yumba_radial.jpg" style="width:566px; border: solid 1px black;"/>
+				  <figcaption>Radial plot of sequence PVb_yumba.</figcaption>
+				</figure>	
+
+				<p>By comparing the linear plots to the score, one can also distinguish musical interpretation. Here musical accents in a driving musical sequence of La Yumba is mirrored by strong accelerations in the visualisation, and the rotation of the couple reflects the musical phrasing:</p>
+				
+				<figure class="textimage">
+				  <img class="textimage" src="images/PVb_yumba_bars11to19.jpg" style="width:589px; border: solid 1px black;"/>
+				  <figcaption>Plot of sequence PVb_yumba bars 11 to 19.</figcaption>
+				</figure>
+
+				<p>Are such visualisations useful? As a means of producing the feedback required for technical and artistic progress in dance, the mirror, the video camera and a good teacher are doubtless more effective and less invasive, but the visualisation add extra angle, helpful particularly in getting a temporal overview of the composition of a dance, something which is difficult for the human kinetic imagination. Possible directions for further development (beyond the obviously necessary collection of more data) include application to other sports which rely on precision in movement, such as rock climbing, or the development of short timescale feedback systems for drilling movement.</p>
+				
+			</div>
+			
+			<div id="method">
+				<p>The data for this project were produced by using an iPhone app called <a href="https://itunes.apple.com/us/app/sensorlog/id388014573?mt=8">SensorLog</a>, which records data from the phone's motion sensors. Three iPhones were used per dancer, one mounted on the outside of the lower calves, to record leg or foot movement, and one mounted on the middle of the upper back, to record chest movement. The iPhones were attached using neoprene phone holders with Velcro straps. It should be noted that iPhone 3GSs were used on the chest and iPhone 4s on the legs. This limitation was caused by shortage of iPhones, and does affect the work, as the iPhone 3 has fewer motion sensors and in generally they are less accurate. When measuring acceleration, the iPhone4 will also distinguish user acceleration from general acceleration (which includes gravitational attraction). This was compensated for by subtracting 1 from the z axis acceleration figures for the iPhone 3, but this is a crude adjustment.</p>
+				
+				<p>The captured were recorded directly to the phone, as WiFi transmission proved unreliable. This created a difficulty in synchronising the data, since the clocks on the iPhones cannot be relied upon to be synchronised - though in practice they are usually within two seconds of each other. This problem was handled by performing a series of simultaneous rotations of all the phones, stacked on top of each other, at the beginning and end of the recording. The movement is recorded by SensorLog and these recordings can be used to align the data from different iPhones. The adjustments required were +/- up to three seconds.</p>
+
+				<div class="textvideo">
+					<iframe src="//www.youtube.com/embed/xhuEpaog4Lo" frameborder="0" allowfullscreen class="textvideo" ></iframe>
+					<div class="videocaption">Example of rotation of iphones to allow for synchronisation of logs. Note the GoPro camera recording the rotations, which makes the video easier to synchronise.</div>
+				</div>				
+				
+				<p>During recording, it is very important that the SensorLog application is not disturbed! In practice this means putting the phone in airplane mode, so no calls or other signals can disturb it; disabling the auto-lock function; closing all other applications; and making sure the phones are fully charged, as the low battery warning disables operation. </p>
+				
+				<p>Two cameras were used to record the dance as well. One was an iPhone 5 camera, and the other a GoPro 2 camera. The latter's "fisheye" lens is very useful for capturing dance, as it effectively captures a whole room, at price of some distortion. The videos captured were uploaded to YouTube and are displayed and controlled using the YouTube API.</p>
+				
+				<p>The code for the project is written in Javascript (view the source of this page to read it). The visualisations are SVGs produced using d3.js, a Javascript library for mapping data to document elements. D3.js reads the CSV files produced by SensorLog and combines it with data specified in the <a href="patadata.js" target="_blank">patadata.js</a> file to produce the charts.</p>
+				
+				<p>Various settings for the visuals were tested, but using combined absolute acceleration for the line length and the magnetic heading value, approximately offset for the orientation of the phone on the body, proved the informative. The headings though should not be taken as absolutely accurate, but the relative motions are meaningful.</p>
+
+				<p>One of the strengths of producing visualisations digitally is that once created (coded), it is easy to create visualisation for new data. Some improvements to the technique would be required though if visualisations are to be produced straight after the dance: mostly with regard to the problem of time synchronisation between the recording devices. Probably the easiest approach would be to have a method for syncing the clocks of the phones exactly before recording.</p>
+			</div>	
+			<div id="thanks">
+				<p>Thanks to <a href="https://www.linkedin.com/pub/maite-delafin/15/527/830">Maité Delafin</a> for offering initial ideas for this project, to Vanessa, Sharon, Michael, Iain, Florian and John for dancing, to David for the loan of IT equipment and iPhones, and to the <a href="http://www.gsa.ac.uk/" target="new">Glasgow School of Art</a>'s <a href="http://lightfollowsrivers.org/" target="_blank">Brian Dixon</a> for advice and suggestions of graphic forms.</p>
+				
+				<p>Thanks to <a href="http://www.research.ed.ac.uk/portal/en/persons/roberto-rabinovich%28ef09f46a-e15a-416c-bdeb-7d4e0e0342d8%29.html" target="_blank">Roberto Rabinovic</a> for providing the musical score for Poema, to Michael Freedman for the introduction to <a href="http://muraterdemsel.com/MusicPaintingsPrints.html" target="_blank">Murat Erdemsel's</a> work, and to <a href="https://www.linkedin.com/pub/tom-harris/17/914/205" target="_blank">Tom Harris</a> for use of his GoPro camera.</p>
+				
+				<p>Thanks also to the developers of the software used, in particular <a href="http://www.berndthomas.net/">Bernd Thomas</a> for <a href="https://itunes.apple.com/gb/app/sensorlog/id388014573?mt=8" target="_blank">SensorLog</a> and to <a href="http://bost.ocks.org/">Mike Bostock</a> for the excellent <a href="http://d3js.org/">d3.js</a> library.</p>
+			</div>				
+		</div> <!-- end text-->
+	</body>
+</html>
